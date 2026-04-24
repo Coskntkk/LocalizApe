@@ -138,7 +138,12 @@ if __name__ == "__main__":
     if not API_KEY:
         print("Error: DEEPL_API_KEY environment variable is missing.")
     else:
-        print("Localization Sync Tool v1.1")
-        print("---------------------------")
+        print("""
+        -------------------------------------------------------------
+        LocalizApe v1.0
+        [Localized Object Composition & Automated Lexicon Integration]
+        -------------------------------------------------------------
+        A WiseMonkeES Open Source Utility
+        """)
         start_sync()
         print("\nAll files are synchronized.")

@@ -1,4 +1,6 @@
-# Localization Sync Tool v1.1
+# LocalizApe
+*Localized Object Composition & Automated Lexicon Integration*
+
 A professional synchronization utility designed to manage multi-language JSON localization files via the **DeepL API**.
 
 ---
