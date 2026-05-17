@@ -21,7 +21,12 @@ config = load_config()
 API_KEY = os.getenv("DEEPL_API_KEY")
 LANG_FOLDER = config.get('project_path')
 MASTER_FILE = config.get('master_file', 'enUS.json')
+CONTEXT_FILE = config.get('context_file', 'context.json')
 SHOULD_BACKUP = config.get('backup', True)
+DEFAULT_CONTEXT = "UI string for software/game interface status and controls."
+
+# Never synced or translated — only read as DeepL hints for locale files.
+SKIP_FILES = frozenset({MASTER_FILE, CONTEXT_FILE})
 
 # API URL Selection
 BASE_URL = "https://api-free.deepl.com/v2/translate" if API_KEY and API_KEY.endswith(":fx") else "https://api.deepl.com/v2/translate"
@@ -57,7 +62,20 @@ def get_deepl_code(filename):
     
     return "ZH" if lang == "ZH" else lang
 
-def translate_batch(texts, target_lang_code):
+def load_context_data():
+    """Loads per-key translation context from context.json if present."""
+    context_path = os.path.join(LANG_FOLDER, CONTEXT_FILE)
+    if not os.path.exists(context_path):
+        return {}
+
+    try:
+        with open(context_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        print(f"Warning: '{CONTEXT_FILE}' is invalid JSON. Using default context only.")
+        return {}
+
+def translate_batch(texts, target_lang_code, context=DEFAULT_CONTEXT):
     """Sends a batch of texts to DeepL API for translation."""
     if not texts:
         return []
@@ -66,10 +84,11 @@ def translate_batch(texts, target_lang_code):
     data = {
         "text": texts,
         "target_lang": target_lang_code,
-        "context": "UI string for software/game interface status and controls.",
         "tag_handling": "xml"
     }
-    
+    if context:
+        data["context"] = context
+
     try:
         r = requests.post(BASE_URL, headers=headers, data=data)
         r.raise_for_status()
@@ -77,6 +96,25 @@ def translate_batch(texts, target_lang_code):
     except Exception as e:
         print(f"  [X] Batch translation error: {str(e)}")
         return [f"TRANSLATION_ERROR: {str(e)}"] * len(texts)
+
+def translate_with_contexts(texts, contexts, target_lang_code):
+    """Translates texts, batching keys that share the same context string."""
+    if not texts:
+        return []
+
+    results = [None] * len(texts)
+    groups = {}
+    for i, (text, ctx) in enumerate(zip(texts, contexts)):
+        ctx = (ctx or "").strip() or DEFAULT_CONTEXT
+        groups.setdefault(ctx, []).append((i, text))
+
+    for ctx, items in groups.items():
+        indices, batch_texts = zip(*items)
+        translated = translate_batch(list(batch_texts), target_lang_code, context=ctx)
+        for idx, trans in zip(indices, translated):
+            results[idx] = trans
+
+    return results
 
 def start_sync():
     master_path = os.path.join(LANG_FOLDER, MASTER_FILE)
@@ -87,7 +125,14 @@ def start_sync():
     with open(master_path, 'r', encoding='utf-8') as f:
         master_data = json.load(f)
 
-    target_files = [f for f in os.listdir(LANG_FOLDER) if f.endswith('.json') and f != MASTER_FILE]
+    context_data = load_context_data()
+    if context_data:
+        print(f"Using per-key context from '{CONTEXT_FILE}' ({len(context_data)} entries).")
+
+    target_files = [
+        f for f in os.listdir(LANG_FOLDER)
+        if f.endswith('.json') and f not in SKIP_FILES
+    ]
     
     if not target_files:
         print("No target language files found.")
@@ -108,6 +153,7 @@ def start_sync():
 
         keys_to_translate = []
         texts_to_translate = []
+        contexts_to_translate = []
         updated_data = {}
 
         # Identify what needs translation
@@ -117,11 +163,14 @@ def start_sync():
             else:
                 keys_to_translate.append(key)
                 texts_to_translate.append(value)
+                contexts_to_translate.append(context_data.get(key, DEFAULT_CONTEXT))
 
         # Execute batch translation
         if texts_to_translate:
             print(f"  [+] Translating {len(texts_to_translate)} new/missing keys...")
-            translated_results = translate_batch(texts_to_translate, deepl_code)
+            translated_results = translate_with_contexts(
+                texts_to_translate, contexts_to_translate, deepl_code
+            )
             
             for key, translated_text in zip(keys_to_translate, translated_results):
                 updated_data[key] = translated_text
